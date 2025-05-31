@@ -1,8 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_calculadora_imc/models/imc.dart';
+import 'package:flutter_calculadora_imc/models/configuracoes.dart';
+import 'package:flutter_calculadora_imc/pages/configuracoes_page.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:path_provider/path_provider.dart' as path_provider;
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Inicializa o Hive
+  if (kIsWeb) {
+    await Hive.initFlutter();
+  } else {
+    final appDocumentDir = await path_provider
+        .getApplicationDocumentsDirectory();
+    await Hive.initFlutter(appDocumentDir.path);
+  }
+
+  // Registra os adaptadores
+  Hive.registerAdapter(IMCAdapter());
+  Hive.registerAdapter(ConfiguracoesAdapter());
+
+  // Abre as boxes
+  await Hive.openBox<IMC>('historico_imc');
+  await Hive.openBox<Configuracoes>('configuracoes');
+
   runApp(const MyApp());
 }
 
@@ -49,7 +73,19 @@ class _HomePageState extends State<HomePage> {
   final _nomeController = TextEditingController();
   final _pesoController = TextEditingController();
   final _alturaController = TextEditingController();
-  final List<IMC> _historico = [];
+  late Box<IMC> _historicoBox;
+  late Box<Configuracoes> _configBox;
+
+  @override
+  void initState() {
+    super.initState();
+    _historicoBox = Hive.box<IMC>('historico_imc');
+    _configBox = Hive.box<Configuracoes>('configuracoes');
+
+    // Carrega a altura inicial das configurações
+    final config = _configBox.get('config') ?? Configuracoes();
+    _alturaController.text = config.alturaInicial.toString();
+  }
 
   void _calcularIMC() {
     if (_formKey.currentState!.validate()) {
@@ -60,13 +96,15 @@ class _HomePageState extends State<HomePage> {
           altura: double.parse(_alturaController.text),
         );
 
-        setState(() {
-          _historico.insert(0, imc); // Adiciona no início da lista
-        });
+        // Salva no Hive
+        _historicoBox.add(imc);
 
         // Limpa os campos
         _pesoController.clear();
-        _alturaController.clear();
+        _alturaController.text =
+            _configBox.get('config')?.alturaInicial.toString() ?? '';
+
+        setState(() {}); // Atualiza a lista
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -86,6 +124,27 @@ class _HomePageState extends State<HomePage> {
         centerTitle: true,
         backgroundColor: Theme.of(context).colorScheme.primary,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ConfiguracoesPage(),
+                ),
+              ).then((_) {
+                // Atualiza a altura ao voltar das configurações
+                final config = _configBox.get('config');
+                if (config != null) {
+                  setState(() {
+                    _alturaController.text = config.alturaInicial.toString();
+                  });
+                }
+              });
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -168,67 +227,83 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-          if (_historico.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: Text(
-                'Histórico de IMC',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-            Expanded(
-              flex: 3,
-              child: ListView.builder(
-                itemCount: _historico.length,
-                padding: const EdgeInsets.all(8),
-                itemBuilder: (context, index) {
-                  final imc = _historico[index];
-                  final resultado = imc.calcular();
-                  final classificacao = imc.getClassificacao();
-                  final cor = imc.getCorClassificacao();
+          ValueListenableBuilder(
+            valueListenable: _historicoBox.listenable(),
+            builder: (context, Box<IMC> box, _) {
+              if (box.isEmpty) {
+                return const SizedBox.shrink();
+              }
 
-                  return Card(
-                    elevation: 4,
-                    margin: const EdgeInsets.symmetric(vertical: 8),
-                    child: ListTile(
-                      title: Text(
-                        imc.nome,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+              return Expanded(
+                flex: 3,
+                child: Column(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.all(8.0),
+                      child: Text(
+                        'Histórico de IMC',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('IMC: ${resultado.toStringAsFixed(2)}'),
-                          Text(
-                            classificacao,
-                            style: TextStyle(
-                              color: cor,
-                              fontWeight: FontWeight.bold,
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: box.length,
+                        padding: const EdgeInsets.all(8),
+                        itemBuilder: (context, index) {
+                          final imc = box.getAt(box.length - 1 - index)!;
+                          final resultado = imc.calcular();
+                          final classificacao = imc.getClassificacao();
+                          final cor = imc.getCorClassificacao();
+
+                          return Card(
+                            elevation: 4,
+                            margin: const EdgeInsets.symmetric(vertical: 8),
+                            child: ListTile(
+                              title: Text(
+                                imc.nome,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('IMC: ${resultado.toStringAsFixed(2)}'),
+                                  Text(
+                                    classificacao,
+                                    style: TextStyle(
+                                      color: cor,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Data: ${DateFormat('dd/MM/yyyy HH:mm').format(imc.data)}',
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () {
+                                  box.deleteAt(box.length - 1 - index);
+                                },
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Data: ${DateFormat('dd/MM/yyyy HH:mm').format(imc.data)}',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () {
-                          setState(() {
-                            _historico.removeAt(index);
-                          });
+                          );
                         },
                       ),
                     ),
-                  );
-                },
-              ),
-            ),
-          ],
+                  ],
+                ),
+              );
+            },
+          ),
         ],
       ),
     );

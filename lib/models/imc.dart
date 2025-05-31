@@ -1,15 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:hive/hive.dart';
 
-class IMC {
-  final double peso;
-  final double altura;
-  final DateTime data;
+part 'imc.g.dart';
+
+@HiveType(typeId: 0)
+class IMC extends HiveObject {
+  @HiveField(0)
   final String nome;
 
+  @HiveField(1)
+  final double peso;
+
+  @HiveField(2)
+  final double altura;
+
+  @HiveField(3)
+  final DateTime data;
+
   IMC({
+    required this.nome,
     required this.peso,
     required this.altura,
-    required this.nome,
     DateTime? data,
   }) : data = data ?? DateTime.now();
 
